@@ -142,7 +142,7 @@
     </div>
 
     <div class="action-panel">
-        <button class="btn-start" id="auto-btn" onclick="toggleAuto()">開始模擬 (0.05秒/局)</button>
+        <button class="btn-start" id="auto-btn" onclick="toggleAuto()">開始模擬 (流暢模式)</button>
         <button class="btn-reset" onclick="resetSim()">重置系統</button>
     </div>
 
@@ -155,7 +155,8 @@
         let rounds = 0;
         let peakBalance = 0;
         let maxDrawdown = 0;
-        let autoPlayInterval = null;
+        
+        let animationId = null; 
         
         let chartInstance = null;
         let labelsData = [];
@@ -196,8 +197,6 @@
             let pLoss = 1 - pWin;
             let payoutRatio = parseFloat(document.getElementById('input-payout').value);
             
-            // 計算「每 1 單位下注」的期望報酬率 (EV %)
-            // EV = (勝率 * 賠率) - (敗率 * 1)
             let evPercent = ((pWin * payoutRatio) - pLoss) * 100;
             
             let evDisplay = document.getElementById('ev-display');
@@ -236,7 +235,7 @@
         }
 
         function toggleAuto() {
-            if (autoPlayInterval) {
+            if (animationId) {
                 stopAuto();
             } else {
                 calculateEV(); 
@@ -254,49 +253,53 @@
                 btn.classList.remove('btn-start');
                 btn.classList.add('btn-stop');
                 
-                // 調整為 0.05 秒 (50 毫秒) 執行一局
-                autoPlayInterval = setInterval(playRound, 50);
+                runLoop();
             }
         }
 
         function stopAuto() {
-            if (autoPlayInterval) {
-                clearInterval(autoPlayInterval);
-                autoPlayInterval = null;
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
                 let btn = document.getElementById('auto-btn');
-                btn.innerText = "開始模擬 (0.05秒/局)";
+                btn.innerText = "開始模擬 (流暢模式)";
                 btn.classList.remove('btn-stop');
                 btn.classList.add('btn-start');
                 chartInstance.update(); 
             }
         }
 
+        function runLoop() {
+            playRound();
+            
+            updateStatsUI();
+            chartInstance.update();
+
+            if (balance > 0.01) {
+                animationId = requestAnimationFrame(runLoop);
+            } else {
+                stopAuto();
+            }
+        }
+
         function playRound() {
-            // 防呆：如果資金少過 0.01，視為破產，自動停止
             if (balance <= 0.01) {
                 balance = 0;
-                updateStatsUI();
-                stopAuto();
                 return;
             }
 
-            // 動態計算當前注碼 (當前資金的百分比)
             let currentBet = balance * betPercent;
-
             rounds++;
-            balance -= currentBet; // 扣除注碼
+            balance -= currentBet; 
             
-            let randomNum = Math.random();
-            
-            if (randomNum < winRate) {
-                // 獲勝：退回本金 + 賺取利潤
+            if (Math.random() < winRate) {
                 balance += currentBet + (currentBet * payout);
             }
 
-            // 更新峰值與最大回撤
             if (balance > peakBalance) {
                 peakBalance = balance;
             }
+            
             let currentDrawdown = ((peakBalance - balance) / peakBalance) * 100;
             if (currentDrawdown > maxDrawdown) {
                 maxDrawdown = currentDrawdown;
@@ -304,12 +307,6 @@
 
             labelsData.push(rounds);
             balanceData.push(balance);
-
-            // 每 10 局更新一次圖表以減輕負載
-            if (rounds % 10 === 0) {
-                updateStatsUI();
-                chartInstance.update();
-            }
         }
 
         document.querySelectorAll('input').forEach(input => {
