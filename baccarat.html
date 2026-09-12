@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>百家樂全面模擬器 (連實時資金曲線)</title>
+    <!-- 引入 Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #1e5631;
+            color: white;
+            margin: 0;
+            padding: 10px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-around;
+            background: #000;
+            padding: 15px;
+            font-size: 20px;
+            font-weight: bold;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .text-gold { color: #ffd700; }
+        .board {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-bottom: 20px;
+        }
+        .hand {
+            background-color: #2e7d32;
+            border: 2px solid #fff;
+            border-radius: 10px;
+            padding: 15px;
+            width: 300px;
+            min-height: 150px;
+        }
+        .cards {
+            font-size: 32px;
+            letter-spacing: 5px;
+            margin: 10px 0;
+            min-height: 45px;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .red { color: #d32f2f; }
+        .black { color: #212121; }
+        .bet-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            max-width: 900px;
+            margin: 0 auto 20px auto;
+            background: #103c1e;
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid #ffd700;
+        }
+        .bet-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #4caf50;
+        }
+        .bet-box label { margin-bottom: 5px; font-size: 14px; font-weight: bold; }
+        .bet-box input { width: 80px; text-align: center; font-size: 16px; padding: 5px; }
+        .controls { margin-bottom: 20px; }
+        select, button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin: 5px;
+            cursor: pointer;
+            border-radius: 5px;
+            border: none;
+            font-weight: bold;
+        }
+        .btn-play { background-color: #f57f17; color: white; }
+        .btn-play:hover { background-color: #f9a825; }
+        .btn-clear { background-color: #d32f2f; color: white; }
+        .btn-auto { background-color: #1976d2; color: white; }
+        
+        .layout-container {
+            display: flex;
+            max-width: 1200px;
+            margin: 0 auto;
+            gap: 20px;
+        }
+        .chart-container {
+            flex: 1;
+            background: #000;
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #4caf50;
+            min-width: 0; /* 解決 flexbox 溢出問題 */
+        }
+        .log-container {
+            width: 300px;
+            background: #000;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: left;
+            font-family: monospace;
+            height: 350px;
+            overflow-y: auto;
+            color: #4caf50;
+            font-size: 12px;
+            border: 1px solid #4caf50;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div>籌碼餘額: <span id="balance" class="text-gold">$10000</span></div>
+        <div>剩餘牌數: <span id="cards-left" class="text-gold">416</span> (8副牌)</div>
+        <div>遊玩局數: <span id="rounds-played" class="text-gold">0</span></div>
+    </div>
+
+    <div class="controls">
+        <label>莊家玩法: </label>
+        <select id="game-mode">
+            <option value="trad">傳統常規版 (莊贏 1賠0.95)</option>
+            <option value="super6">免佣版 / Super 6 (莊贏 1賠1, 6點贏1賠0.5)</option>
+        </select>
+        <button class="btn-play" onclick="playRound()">單局發牌</button>
+        <button class="btn-auto" id="auto-btn" onclick="toggleAutoPlay()">開始自動遊玩 (0.01秒/局)</button>
+        <button class="btn-clear" onclick="clearBets()">清除下注</button>
+        <button onclick="location.reload()" style="background-color: #555; color: white;">重置遊戲</button>
+    </div>
+    
+    <div class="board">
+        <div class="hand" id="player-zone">
+            <h2>閒家 (Player) <span id="p-score">0</span>點</h2>
+            <div class="cards" id="player-cards"></div>
+        </div>
+        <div class="hand" id="banker-zone">
+            <h2>莊家 (Banker) <span id="b-score">0</span>點</h2>
+            <div class="cards" id="banker-cards"></div>
+        </div>
+    </div>
+
+    <!-- 下注區 -->
+    <div class="bet-grid">
+        <div class="bet-box"><label>閒家 (1賠1)</label><input type="number" id="bet-player" min="0" value="0"></div>
+        <div class="bet-box"><label>莊家</label><input type="number" id="bet-banker" min="0" value="0"></div>
+        <div class="bet-box"><label>和局 (1賠8)</label><input type="number" id="bet-tie" min="0" value="0"></div>
+        <div class="bet-box"><label>大小: 大 (1賠0.54)</label><input type="number" id="bet-big" min="0" value="0"></div>
+        
+        <div class="bet-box"><label>閒對子 (1賠11)</label><input type="number" id="bet-ppair" min="0" value="0"></div>
+        <div class="bet-box"><label>莊對子 (1賠11)</label><input type="number" id="bet-bpair" min="0" value="0"></div>
+        <div class="bet-box"><label>任意對子 (1賠5)</label><input type="number" id="bet-anypair" min="0" value="0"></div>
+        <div class="bet-box"><label>大小: 小 (1賠1.5)</label><input type="number" id="bet-small" min="0" value="0"></div>
+    </div>
+
+    <!-- 底部數據區：圖表與日誌並排 -->
+    <div class="layout-container">
+        <div class="chart-container">
+            <canvas id="balanceChart"></canvas>
+        </div>
+        <div class="log-container" id="log">系統就緒。請設定下注金額並點擊發牌。</div>
+    </div>
+
+    <script>
+        const suits = [{ s: '♠', c: 'black' }, { s: '♥', c: 'red' }, { s: '♦', c: 'red' }, { s: '♣', c: 'black' }];
+        const values = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+        let deck = [];
+        let balance = 10000;
+        let roundsPlayed = 0;
+        let autoPlayInterval = null; 
+
+        // 圖表數據陣列
+        let labelsData = [0];
+        let balanceData = [10000];
+        let chartInstance = null;
+
+        function initChart() {
+            const ctx = document.getElementById('balanceChart').getContext('2d');
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labelsData,
+                    datasets: [{
+                        label: '資金淨值 (Equity Curve)',
+                        data: balanceData,
+                        borderColor: '#ffd700',
+                        backgroundColor: 'rgba(255, 215, 0, 0.1)',
+                        borderWidth: 2,
+                        pointRadius: 0, // 關閉節點圓圈，大幅提升效能
+                        fill: true,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false, // 關閉動畫，避免高頻更新卡頓
+                    scales: {
+                        x: {
+                            title: { display: true, text: '遊玩局數', color: '#fff' },
+                            ticks: { color: '#aaa', maxTicksLimit: 10 }
+                        },
+                        y: {
+                            title: { display: true, text: '籌碼金額 ($)', color: '#fff' },
+                            ticks: { color: '#aaa' },
+                            beginAtZero: true
+                        }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#fff' } }
+                    }
+                }
+            });
+        }
+
+        function initDeck() {
+            deck = [];
+            for (let i = 0; i < 8; i++) {
+                for (let suit of suits) {
+                    for (let value of values) {
+                        deck.push({ suit: suit.s, color: suit.c, value: value, weight: getWeight(value) });
+                    }
+                }
+            }
+            for (let i = deck.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [deck[i], deck[j]] = [deck[j], deck[i]];
+            }
+            updateDeckCount();
+        }
+
+        function getWeight(value) {
+            if (value === 'A') return 1;
+            if (['10', 'J', 'Q', 'K'].includes(value)) return 0;
+            return parseInt(value);
+        }
+
+        function drawCard() {
+            if (deck.length < 20) initDeck();
+            const card = deck.pop();
+            updateDeckCount();
+            return card;
+        }
+
+        function calculateScore(cards) {
+            return cards.reduce((sum, card) => sum + card.weight, 0) % 10;
+        }
+
+        function updateDeckCount() {
+            document.getElementById('cards-left').innerText = deck.length;
+        }
+
+        function updateBalance() {
+            document.getElementById('balance').innerText = '$' + balance.toFixed(2);
+        }
+
+        function updateRounds() {
+            document.getElementById('rounds-played').innerText = roundsPlayed;
+        }
+
+        function logMsg(msg) {
+            const log = document.getElementById('log');
+            const newEntry = document.createElement('div');
+            newEntry.innerHTML = `> ${msg}`;
+            log.insertBefore(newEntry, log.firstChild);
+            
+            while (log.children.length > 25) {
+                log.removeChild(log.lastChild);
+            }
+        }
+
+        function clearBets() {
+            document.querySelectorAll('input[type="number"]').forEach(input => input.value = 0);
+            stopAutoPlay();
+        }
+
+        function getBets() {
+            return {
+                player: Number(document.getElementById('bet-player').value) || 0,
+                banker: Number(document.getElementById('bet-banker').value) || 0,
+                tie: Number(document.getElementById('bet-tie').value) || 0,
+                pPair: Number(document.getElementById('bet-ppair').value) || 0,
+                bPair: Number(document.getElementById('bet-bpair').value) || 0,
+                big: Number(document.getElementById('bet-big').value) || 0,
+                small: Number(document.getElementById('bet-small').value) || 0,
+                anyPair: Number(document.getElementById('bet-anypair').value) || 0
+            };
+        }
+
+        function toggleAutoPlay() {
+            if (autoPlayInterval) {
+                stopAutoPlay();
+            } else {
+                let bets = getBets();
+                let totalBet = Object.values(bets).reduce((a, b) => a + b, 0);
+                if (totalBet <= 0) {
+                    logMsg("<span style='color:#ff5252'>請先設定下注金額，再開始自動遊玩。</span>");
+                    return;
+                }
+                if (totalBet > balance) {
+                    logMsg("<span style='color:#ff5252'>籌碼不足，無法啟動。</span>");
+                    return;
+                }
+
+                logMsg("啟動極速自動遊玩模式...");
+                let btn = document.getElementById('auto-btn');
+                btn.innerText = "停止自動遊玩";
+                btn.style.backgroundColor = "#d32f2f";
+                
+                playRound();
+                autoPlayInterval = setInterval(playRound, 10);
+            }
+        }
+
+        function stopAutoPlay() {
+            if (autoPlayInterval) {
+                clearInterval(autoPlayInterval);
+                autoPlayInterval = null;
+                let btn = document.getElementById('auto-btn');
+                btn.innerText = "開始自動遊玩 (0.01秒/局)";
+                btn.style.backgroundColor = "#1976d2";
+                logMsg("自動遊玩已停止。");
+                chartInstance.update(); // 停止時強制刷新一次圖表
+            }
+        }
+
+        function playRound() {
+            let bets = getBets();
+            let totalBet = Object.values(bets).reduce((a, b) => a + b, 0);
+
+            if (totalBet <= 0) {
+                stopAutoPlay();
+                return;
+            }
+            if (totalBet > balance) {
+                logMsg("<span style='color:#ff5252'>錯誤：籌碼餘額不足，已中斷執行。</span>");
+                stopAutoPlay();
+                return;
+            }
+
+            roundsPlayed++;
+            updateRounds();
+            balance -= totalBet;
+            
+            let pCards = [drawCard(), drawCard()];
+            let bCards = [drawCard(), drawCard()];
+            let pScore = calculateScore(pCards);
+            let bScore = calculateScore(bCards);
+            let pThirdCard = null;
+
+            if (pScore < 8 && bScore < 8) {
+                if (pScore <= 5) {
+                    pThirdCard = drawCard();
+                    pCards.push(pThirdCard);
+                    pScore = calculateScore(pCards);
+                }
+                let bDraws = false;
+                if (pThirdCard === null) {
+                    if (bScore <= 5) bDraws = true;
+                } else {
+                    let p3 = pThirdCard.weight;
+                    if (bScore <= 2) bDraws = true;
+                    else if (bScore === 3 && p3 !== 8) bDraws = true;
+                    else if (bScore === 4 && p3 >= 2 && p3 <= 7) bDraws = true;
+                    else if (bScore === 5 && p3 >= 4 && p3 <= 7) bDraws = true;
+                    else if (bScore === 6 && (p3 === 6 || p3 === 7)) bDraws = true;
+                }
+                if (bDraws) {
+                    bCards.push(drawCard());
+                    bScore = calculateScore(bCards);
+                }
+            }
+
+            renderCards('player-cards', pCards);
+            renderCards('banker-cards', bCards);
+            document.getElementById('p-score').innerText = pScore;
+            document.getElementById('b-score').innerText = bScore;
+
+            calculateWinnings(pCards, bCards, pScore, bScore, bets, totalBet);
+        }
+
+        function renderCards(elementId, cards) {
+            let html = cards.map(c => `<span class="${c.color}">${c.suit}${c.value}</span>`).join(' ');
+            document.getElementById(elementId).innerHTML = html;
+        }
+
+        function calculateWinnings(pCards, bCards, pScore, bScore, bets, totalBet) {
+            let payout = 0;
+            let mode = document.getElementById('game-mode').value;
+            let totalCards = pCards.length + bCards.length;
+            let pPair = pCards[0].value === pCards[1].value;
+            let bPair = bCards[0].value === bCards[1].value;
+            let resultStr = [];
+
+            if (pScore > bScore) {
+                resultStr.push("閒贏");
+                if (bets.player > 0) payout += bets.player * 2;
+            } else if (bScore > pScore) {
+                resultStr.push("莊贏");
+                if (bets.banker > 0) {
+                    if (mode === 'trad') {
+                        payout += bets.banker + (bets.banker * 0.95);
+                    } else if (mode === 'super6') {
+                        if (bScore === 6) {
+                            payout += bets.banker + (bets.banker * 0.5);
+                            resultStr.push("莊6點勝出");
+                        } else {
+                            payout += bets.banker * 2;
+                        }
+                    }
+                }
+            } else {
+                resultStr.push("和局");
+                if (bets.tie > 0) payout += bets.tie * 9;
+                if (bets.player > 0) payout += bets.player;
+                if (bets.banker > 0) payout += bets.banker;
+            }
+
+            if (pPair && bets.pPair > 0) payout += bets.pPair * 12;
+            if (bPair && bets.bPair > 0) payout += bets.bPair * 12;
+            if (totalCards > 4 && bets.big > 0) payout += bets.big + (bets.big * 0.54);
+            if (totalCards === 4 && bets.small > 0) payout += bets.small * 2.5;
+            if ((pPair || bPair) && bets.anyPair > 0) payout += bets.anyPair * 6;
+
+            balance += payout;
+            updateBalance();
+            
+            // 更新圖表數據
+            labelsData.push(roundsPlayed);
+            balanceData.push(balance);
+            
+            // 降頻渲染：每 10 局才實際重繪一次圖表，避免高頻卡死
+            if (roundsPlayed % 10 === 0) {
+                chartInstance.update();
+            }
+
+            let net = payout - totalBet;
+            let color = net > 0 ? "yellow" : (net < 0 ? "#ff5252" : "white");
+            logMsg(`[第 ${roundsPlayed} 局] 淨利: <span style="color:${color}">${net > 0 ? '+' : ''}${net.toFixed(2)}</span>`);
+        }
+
+        // 頁面載入時初始化
+        initDeck();
+        initChart();
+    </script>
+</body>
+</html>
