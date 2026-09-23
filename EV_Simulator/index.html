@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>動態倉位 (1%) 與資金曲線模擬器</title>
+    <title>動態倉位與資金 & 勝率收斂模擬器</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
@@ -28,10 +28,13 @@
         .text-gold { color: #ffd700; }
         .text-green { color: #4caf50; }
         .text-red { color: #ff5252; }
+        .text-blue { color: #03a9f4; }
+        .text-orange { color: #ff9800; }
         
         .control-panel {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            /* 改用 auto-fit 令欄位自動適應，容納 5 個輸入框 */
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
             gap: 15px;
             background: #1e1e1e;
             padding: 20px;
@@ -53,7 +56,7 @@
             color: #aaa;
         }
         .input-group input {
-            width: 100px;
+            width: 120px;
             padding: 8px;
             font-size: 16px;
             text-align: center;
@@ -65,7 +68,7 @@
         
         .stats-panel {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(4, 1fr);
             gap: 15px;
             max-width: 1000px;
             margin: 0 auto 20px auto;
@@ -80,34 +83,41 @@
         
         .action-panel {
             margin-bottom: 20px;
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 10px;
         }
         button {
             padding: 12px 25px;
             font-size: 16px;
-            margin: 0 10px;
             cursor: pointer;
             border-radius: 5px;
             border: none;
             font-weight: bold;
+            transition: 0.2s;
         }
+        button:hover { opacity: 0.8; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-fast { background-color: #9c27b0; color: white; }
         .btn-start { background-color: #1976d2; color: white; }
         .btn-stop { background-color: #d32f2f; color: white; }
         .btn-reset { background-color: #555; color: white; }
         
         .chart-container {
             max-width: 1200px;
-            margin: 0 auto;
+            margin: 0 auto 20px auto;
             background: #1e1e1e;
             padding: 20px;
             border-radius: 8px;
             border: 1px solid #333;
-            height: 450px;
+            height: 350px;
         }
     </style>
 </head>
 <body>
 
-    <h1>動態倉位與資金曲線模擬器 (按比例下注)</h1>
+    <h1>動態倉位與資金 & 勝率收斂模擬器</h1>
 
     <div class="header">
         <div>當前資金: <span id="current-balance" class="text-gold">$10000.00</span></div>
@@ -125,12 +135,17 @@
             <input type="number" id="input-bet-percent" value="1" step="0.1" title="例如輸入 1 代表每次下注當前剩餘資金的 1%">
         </div>
         <div class="input-group">
-            <label>勝率 (%)</label>
+            <label>目標勝率 (%)</label>
             <input type="number" id="input-winrate" value="45.86" step="0.01">
         </div>
         <div class="input-group">
             <label>賠率 / 盈虧比</label>
-            <input type="number" id="input-payout" value="0.95" step="0.01" title="例如：1賠1輸入1，1賠0.95輸入0.95">
+            <input type="number" id="input-payout" value="0.95" step="0.01">
+        </div>
+        <!-- 新增自訂局數輸入框 -->
+        <div class="input-group">
+            <label>自訂執行局數 (次)</label>
+            <input type="number" id="input-sim-count" value="1000" step="100" min="1" title="每次點擊瞬間執行的局數">
         </div>
     </div>
 
@@ -138,33 +153,55 @@
     <div class="stats-panel">
         <div class="stat-box">下注期望回報率 (EV %): <br><strong id="ev-display" style="font-size: 22px;">0.00%</strong></div>
         <div class="stat-box">最高資金峰值 (Peak): <br><strong id="peak-display" class="text-green">0.00</strong></div>
-        <div class="stat-box">最大回撤 (Max Drawdown): <br><strong id="dd-display" class="text-red">0.00%</strong></div>
+        <div class="stat-box">最大回撤 (MDD): <br><strong id="dd-display" class="text-red">0.00%</strong></div>
+        <div class="stat-box">當前實際勝率: <br><strong id="actual-winrate-display" class="text-orange">0.00%</strong></div>
     </div>
 
     <div class="action-panel">
-        <button class="btn-start" id="auto-btn" onclick="toggleAuto()">開始模擬 (流暢模式)</button>
+        <!-- 新增瞬間執行按鈕 -->
+        <button class="btn-fast" id="fast-btn" onclick="runFastSim()">瞬間執行自訂局數</button>
+        <button class="btn-start" id="auto-btn" onclick="toggleAuto()">連續模擬 (流暢模式)</button>
         <button class="btn-reset" onclick="resetSim()">重置系統</button>
     </div>
 
+    <!-- 資金曲線圖表 -->
     <div class="chart-container">
         <canvas id="equityChart"></canvas>
+    </div>
+
+    <!-- 勝率收斂圖表 -->
+    <div class="chart-container">
+        <canvas id="winRateChart"></canvas>
     </div>
 
     <script>
         let balance, initialCapital, betPercent, winRate, payout;
         let rounds = 0;
+        let totalWins = 0;
         let peakBalance = 0;
         let maxDrawdown = 0;
         
         let animationId = null; 
         
+        // 圖表實例與數據
         let chartInstance = null;
+        let winRateChartInstance = null;
         let labelsData = [];
         let balanceData = [];
+        let actualWinRateData = []; 
+        let targetWinRateData = []; 
 
         function initChart() {
-            const ctx = document.getElementById('equityChart').getContext('2d');
-            chartInstance = new Chart(ctx, {
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false, // 關閉動畫確保大數據量時流暢
+                plugins: { legend: { labels: { color: '#ccc' } } },
+                elements: { line: { tension: 0 } } // 關閉貝茲曲線，提升大量數據渲染效能
+            };
+
+            const ctx1 = document.getElementById('equityChart').getContext('2d');
+            chartInstance = new Chart(ctx1, {
                 type: 'line',
                 data: {
                     labels: labelsData,
@@ -175,19 +212,54 @@
                         backgroundColor: 'rgba(3, 169, 244, 0.1)',
                         borderWidth: 2,
                         pointRadius: 0, 
-                        fill: true,
-                        tension: 0.1
+                        fill: true
                     }]
                 },
                 options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    animation: false, 
+                    ...chartOptions,
                     scales: {
                         x: { title: { display: true, text: '執行局數', color: '#aaa' }, ticks: { color: '#888', maxTicksLimit: 15 } },
                         y: { title: { display: true, text: '資金餘額 ($)', color: '#aaa' }, ticks: { color: '#888' } }
-                    },
-                    plugins: { legend: { labels: { color: '#ccc' } } }
+                    }
+                }
+            });
+
+            const ctx2 = document.getElementById('winRateChart').getContext('2d');
+            winRateChartInstance = new Chart(ctx2, {
+                type: 'line',
+                data: {
+                    labels: labelsData,
+                    datasets: [
+                        {
+                            label: '實際勝率 (%)',
+                            data: actualWinRateData,
+                            borderColor: '#ff9800',
+                            borderWidth: 2,
+                            pointRadius: 0, 
+                            fill: false
+                        },
+                        {
+                            label: '目標勝率 (%)',
+                            data: targetWinRateData,
+                            borderColor: '#4caf50',
+                            borderWidth: 2,
+                            borderDash: [5, 5],
+                            pointRadius: 0,
+                            fill: false
+                        }
+                    ]
+                },
+                options: {
+                    ...chartOptions,
+                    scales: {
+                        x: { title: { display: true, text: '執行局數', color: '#aaa' }, ticks: { color: '#888', maxTicksLimit: 15 } },
+                        y: { 
+                            title: { display: true, text: '勝率 (%)', color: '#aaa' }, 
+                            ticks: { color: '#888' },
+                            suggestedMin: Math.max(0, parseFloat(document.getElementById('input-winrate').value) - 10),
+                            suggestedMax: Math.min(100, parseFloat(document.getElementById('input-winrate').value) + 10)
+                        }
+                    }
                 }
             });
         }
@@ -209,6 +281,9 @@
             document.getElementById('rounds').innerText = rounds;
             document.getElementById('peak-display').innerText = '$' + peakBalance.toFixed(2);
             document.getElementById('dd-display').innerText = maxDrawdown.toFixed(2) + '%';
+            
+            let currentWinRate = rounds > 0 ? (totalWins / rounds) * 100 : parseFloat(document.getElementById('input-winrate').value);
+            document.getElementById('actual-winrate-display').innerText = currentWinRate.toFixed(2) + '%';
         }
 
         function resetSim() {
@@ -221,17 +296,68 @@
             
             balance = initialCapital;
             rounds = 0;
+            totalWins = 0;
             peakBalance = initialCapital;
             maxDrawdown = 0;
             
+            let targetWinRatePercent = winRate * 100;
+
             labelsData = [0];
             balanceData = [initialCapital];
+            actualWinRateData = [targetWinRatePercent]; 
+            targetWinRateData = [targetWinRatePercent];
             
             calculateEV();
             updateStatsUI();
             
             if (chartInstance) chartInstance.destroy();
+            if (winRateChartInstance) winRateChartInstance.destroy();
             initChart();
+        }
+
+        // 新增：瞬間執行指定局數邏輯
+        function runFastSim() {
+            if (animationId) stopAuto(); // 如果流暢模式運行中，先停止
+            
+            if (balance <= 0.01) {
+                alert("資金已歸零，請重置系統！");
+                return;
+            }
+
+            let simCount = parseInt(document.getElementById('input-sim-count').value);
+            if (isNaN(simCount) || simCount <= 0) return;
+
+            let btn = document.getElementById('fast-btn');
+            btn.disabled = true;
+            btn.innerText = "運算中...";
+
+            calculateEV();
+            betPercent = parseFloat(document.getElementById('input-bet-percent').value) / 100;
+            winRate = parseFloat(document.getElementById('input-winrate').value) / 100;
+            payout = parseFloat(document.getElementById('input-payout').value);
+
+            let earlyStop = false;
+
+            // 瞬間執行 for 迴圈
+            for (let i = 0; i < simCount; i++) {
+                if (balance <= 0.01) {
+                    earlyStop = true;
+                    break;
+                }
+                playRound();
+            }
+
+            // 迴圈結束後一次過更新畫面與圖表
+            updateStatsUI();
+            chartInstance.update();
+            winRateChartInstance.update();
+
+            btn.disabled = false;
+            btn.innerText = "瞬間執行自訂局數";
+
+            if (earlyStop) {
+                setTimeout(() => alert("資金已歸零，提前停止運算！"), 50);
+            }
         }
 
         function toggleAuto() {
@@ -252,6 +378,7 @@
                 btn.innerText = "停止模擬";
                 btn.classList.remove('btn-start');
                 btn.classList.add('btn-stop');
+                document.getElementById('fast-btn').disabled = true; // 流暢模式時禁用瞬間執行
                 
                 runLoop();
             }
@@ -262,10 +389,13 @@
                 cancelAnimationFrame(animationId);
                 animationId = null;
                 let btn = document.getElementById('auto-btn');
-                btn.innerText = "開始模擬 (流暢模式)";
+                btn.innerText = "連續模擬 (流暢模式)";
                 btn.classList.remove('btn-stop');
                 btn.classList.add('btn-start');
+                document.getElementById('fast-btn').disabled = false;
+                
                 chartInstance.update(); 
+                winRateChartInstance.update();
             }
         }
 
@@ -274,6 +404,7 @@
             
             updateStatsUI();
             chartInstance.update();
+            winRateChartInstance.update();
 
             if (balance > 0.01) {
                 animationId = requestAnimationFrame(runLoop);
@@ -294,12 +425,12 @@
             
             if (Math.random() < winRate) {
                 balance += currentBet + (currentBet * payout);
+                totalWins++;
             }
 
             if (balance > peakBalance) {
                 peakBalance = balance;
             }
-            
             let currentDrawdown = ((peakBalance - balance) / peakBalance) * 100;
             if (currentDrawdown > maxDrawdown) {
                 maxDrawdown = currentDrawdown;
@@ -307,6 +438,8 @@
 
             labelsData.push(rounds);
             balanceData.push(balance);
+            actualWinRateData.push((totalWins / rounds) * 100);
+            targetWinRateData.push(winRate * 100);
         }
 
         document.querySelectorAll('input').forEach(input => {
