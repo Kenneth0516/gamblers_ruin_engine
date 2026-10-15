@@ -1,0 +1,1495 @@
+<!DOCTYPE html>
+<html lang="zh-HK" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QuantMC // 蒙地卡羅期貨與自營商風控模擬終端</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            slate: {
+              850: '#131c2e',
+              900: '#0f172a',
+              950: '#080d1a'
+            }
+          },
+          fontFamily: {
+            mono: ['"JetBrains Mono"', '"Fira Code"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+            sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'sans-serif']
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+    body {
+      background-color: #080d1a;
+      color: #e2e8f0;
+      font-family: 'Inter', sans-serif;
+    }
+    .tabular-nums {
+      font-variant-numeric: tabular-nums;
+    }
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0f172a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+    input[type="range"] {
+      accent-color: #38bdf8;
+    }
+    .tooltip-trigger:hover .tooltip-content {
+      display: block;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col selection:bg-sky-500/30 selection:text-sky-200">
+
+  <!-- Top Header Bar -->
+  <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-30 px-4 py-2.5 flex flex-wrap items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <div class="h-8 w-8 rounded bg-sky-500/10 border border-sky-500/40 flex items-center justify-center text-sky-400 font-mono font-bold text-sm">
+        MC
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="font-mono font-bold text-sm md:text-base tracking-tight text-slate-100">
+            QUANT-MC // FUTURES & PROP RISK ENGINE
+          </h1>
+          <span class="text-[11px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+            NON-I.I.D. BOOTSTRAP
+          </span>
+        </div>
+        <p class="text-xs text-slate-400">
+          Stationary / Circular Block Resampling · Fat-Tail Slippage · Intra-Trade MFE/MAE Trailing Drawdown
+        </p>
+      </div>
+    </div>
+
+    <!-- Quick Presets & Run Trigger -->
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="flex items-center bg-slate-950 border border-slate-800 rounded p-1 text-xs font-mono">
+        <span class="text-slate-500 px-2">合約預設:</span>
+        <button type="button" onclick="applyInstrumentPreset('MNQ')" class="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 transition">MNQ</button>
+        <button type="button" onclick="applyInstrumentPreset('NQ')" class="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 transition">NQ</button>
+        <button type="button" onclick="applyInstrumentPreset('MES')" class="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 transition">MES</button>
+        <button type="button" onclick="applyInstrumentPreset('ES')" class="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 transition">ES</button>
+      </div>
+
+      <div class="flex items-center bg-slate-950 border border-slate-800 rounded p-1 text-xs font-mono">
+        <span class="text-slate-500 px-2">風控預設:</span>
+        <button type="button" onclick="applyPropPreset('APEX_50K')" class="px-2 py-1 rounded hover:bg-slate-800 text-amber-300 transition" title="50K 帳戶 / $2500 盤中最高水位回撤 / $3000 目標">Apex 50K (盤中)</button>
+        <button type="button" onclick="applyPropPreset('TOPSTEP_50K')" class="px-2 py-1 rounded hover:bg-slate-800 text-sky-300 transition" title="50K 帳戶 / $2000 日終 EOD 回撤 / $3000 目標">Topstep 50K (EOD)</button>
+        <button type="button" onclick="applyPropPreset('STATIC_100K')" class="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 transition" title="100K 帳戶 / $5000 靜態回撤">Static 100K</button>
+      </div>
+
+      <button id="runSimBtn" type="button" onclick="runSimulation()" class="flex items-center gap-2 px-4 py-1.5 rounded bg-sky-500 hover:bg-sky-400 active:bg-sky-600 text-slate-950 font-mono font-semibold text-xs transition shadow-lg shadow-sky-500/20">
+        <svg id="runIcon" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/>
+        </svg>
+        <span id="runBtnText">執行蒙地卡羅模擬 (RUN)</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Progress Bar Strip -->
+  <div class="w-full h-1 bg-slate-900 overflow-hidden relative">
+    <div id="simProgressBar" class="h-full bg-sky-400 transition-all duration-75 w-0"></div>
+  </div>
+
+  <!-- Main Content Grid -->
+  <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 max-w-[1920px] w-full mx-auto">
+
+    <!-- LEFT SIDEBAR: Controls Panel (4 cols on lg, 3 cols on xl) -->
+    <aside class="lg:col-span-4 xl:col-span-3 flex flex-col gap-3">
+
+      <!-- 1. Data Source Toggle & Generator / CSV Input -->
+      <section class="bg-slate-900 border border-slate-800 rounded-lg p-3.5 flex flex-col gap-3">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+          <h2 class="text-xs font-mono font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-sky-400"></span>
+            1. 數據源與策略參數 (Data Source)
+          </h2>
+          <div class="inline-flex rounded bg-slate-950 p-0.5 border border-slate-800 text-[11px] font-mono">
+            <button type="button" id="tabSynthetic" onclick="switchDataSource('synthetic')" class="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40">合成生成</button>
+            <button type="button" id="tabEmpirical" onclick="switchDataSource('empirical')" class="px-2 py-0.5 rounded text-slate-400 hover:text-slate-200">CSV 實證</button>
+          </div>
+        </div>
+
+        <!-- Synthetic Mode Controls -->
+        <div id="panelSynthetic" class="grid grid-cols-2 gap-2.5 text-xs">
+          <div>
+            <label class="text-slate-400 block mb-1">勝率 Win Rate (%)</label>
+            <input id="inpWinRate" type="number" step="0.5" min="5" max="95" value="46.0" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none tabular-nums" />
+          </div>
+          <div>
+            <label class="text-slate-400 block mb-1">賺賠比 Payoff (R:R)</label>
+            <input id="inpPayoff" type="number" step="0.05" min="0.2" max="10" value="1.65" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none tabular-nums" />
+          </div>
+          <div>
+            <label class="text-slate-400 block mb-1" title="單筆基礎風險金額（不含滑價與手續費），即 1R 對應之美元風險">單筆風險 1R ($)</label>
+            <input id="inpRiskPerTrade" type="number" step="10" min="10" max="50000" value="250" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none tabular-nums" />
+          </div>
+          <div>
+            <label class="text-slate-400 block mb-1" title="連敗自相關係數：正值表示虧損後更容易再次虧損（Tilt / 逆風盤叢聚）">虧損自相關 &rho; (-0.4~0.6)</label>
+            <input id="inpAutocorr" type="number" step="0.05" min="-0.4" max="0.6" value="0.18" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none tabular-nums" />
+          </div>
+          <div class="col-span-2">
+            <div class="flex justify-between text-slate-400 mb-1">
+              <span title="模擬每筆交易盤中最大浮盈(MFE)與最大浮虧(MAE)相對於 1R 的波動倍率，直接影響盤中最高水位回撤">盤中高低點偏移強度 (MFE/MAE Noise)</span>
+              <span id="lblExcursion" class="font-mono text-sky-400">0.45 R</span>
+            </div>
+            <input id="inpExcursion" type="range" min="0.0" max="1.2" step="0.05" value="0.45" oninput="document.getElementById('lblExcursion').textContent = parseFloat(this.value).toFixed(2) + ' R'" class="w-full" />
+          </div>
+        </div>
+
+        <!-- Empirical CSV Mode Controls (Hidden by default) -->
+        <div id="panelEmpirical" class="hidden flex-col gap-2.5 text-xs">
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400">格式: 每行一筆 <code class="text-sky-400 font-mono">PnL</code> 或 <code class="text-sky-400 font-mono">PnL,MAE,MFE</code></span>
+            <button type="button" onclick="loadSampleCSV()" class="text-[11px] font-mono text-sky-400 hover:underline">載入 MNQ 實盤樣本</button>
+          </div>
+          <textarea id="inpCsvText" rows="4" placeholder="例如 (單位 $ 或 R):&#10;380, -120, 490&#10;-250, -260, 80&#10;620, -90, 740&#10;-250, -255, 30" class="w-full bg-slate-950 border border-slate-800 rounded p-2 font-mono text-[11px] text-slate-200 focus:border-sky-500 focus:outline-none"></textarea>
+          <div class="flex items-center justify-between gap-2">
+            <label class="flex-1 cursor-pointer bg-slate-950 hover:bg-slate-800 border border-dashed border-slate-700 rounded px-2.5 py-1.5 text-center text-slate-400 transition">
+              <span>上傳 CSV 檔案</span>
+              <input id="inpCsvFile" type="file" accept=".csv,.txt" class="hidden" onchange="handleCsvFileUpload(event)" />
+            </label>
+            <select id="inpCsvUnit" class="bg-slate-950 border border-slate-800 rounded px-2 py-1.5 font-mono text-slate-200">
+              <option value="USD">數值單位: 美元 ($)</option>
+              <option value="R">數值單位: R 倍數</option>
+            </select>
+          </div>
+          <div id="csvParseStatus" class="text-[11px] font-mono text-slate-400">尚未載入自訂序列（點擊上方可載入樣本）</div>
+        </div>
+      </section>
+
+      <!-- 2. Resampling & Horizon Engine -->
+      <section class="bg-slate-900 border border-slate-800 rounded-lg p-3.5 flex flex-col gap-2.5 text-xs">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+          <h2 class="font-mono font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-indigo-400"></span>
+            2. 非獨立重抽樣引擎 (Bootstrap)
+          </h2>
+          <div class="relative tooltip-trigger cursor-help text-slate-500 hover:text-slate-300">
+            <span class="font-mono text-[11px] border border-slate-700 rounded px-1">?</span>
+            <div class="tooltip-content hidden absolute right-0 top-6 w-64 p-2.5 bg-slate-950 border border-slate-700 rounded shadow-xl text-[11px] text-slate-300 z-40 leading-relaxed">
+              <strong class="text-sky-400">Stationary Bootstrap (Politis & Romano)</strong>：以幾何分佈隨機決定區塊長度（平均值為 B），避免固定區塊切割邊界效應，保留真實交易中的波動率叢聚與連敗區間。
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2.5">
+          <div class="col-span-2">
+            <label class="text-slate-400 block mb-1">重抽樣方法 (Resampling Method)</label>
+            <select id="inpBootstrapMethod" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none">
+              <option value="stationary">Stationary Bootstrap (Politis & Romano 隨機區塊)</option>
+              <option value="circular">Circular Block Bootstrap (固定長度循環區塊)</option>
+              <option value="iid">Naive I.I.D. Uniform (對照組：無記憶均勻抽樣)</option>
+            </select>
+          </div>
+
+          <div class="col-span-2">
+            <div class="flex justify-between text-slate-400 mb-1">
+              <span>平均區塊長度 Block Size ($B$)</span>
+              <span id="lblBlockSize" class="font-mono text-sky-400">7 筆交易</span>
+            </div>
+            <input id="inpBlockSize" type="range" min="1" max="30" step="1" value="7" oninput="document.getElementById('lblBlockSize').textContent = this.value + ' 筆交易'" class="w-full" />
+          </div>
+
+          <div>
+            <label class="text-slate-400 block mb-1">模擬路徑數 ($N$)</label>
+            <input id="inpPaths" type="number" step="500" min="100" max="10000" value="2500" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none tabular-nums" />
+          </div>
+          <div>
+            <label class="text-slate-400 block mb-1">每路徑交易數 ($T$)</label>
+            <input id="inpTrades" type="number" step="50" min="20" max="1500" value="250" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none tabular-nums" />
+          </div>
+          <div>
+            <label class="text-slate-400 block mb-1" title="用於計算 EOD 日終移動回撤的日切點">每日交易筆數 (EOD切點)</label>
+            <input id="inpTradesPerDay" type="number" step="1" min="1" max="100" value="5" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none tabular-nums" />
+          </div>
+          <div>
+            <label class="text-slate-400 block mb-1">交易口數 (Contracts)</label>
+            <input id="inpContracts" type="number" step="1" min="1" max="100" value="2" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none tabular-nums" />
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. Stochastic Slippage & Friction -->
+      <section class="bg-slate-900 border border-slate-800 rounded-lg p-3.5 flex flex-col gap-2.5 text-xs">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+          <h2 class="font-mono font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+            3. 動態滑價與摩擦成本 (Friction)
+          </h2>
+          <span id="lblInstrumentBadge" class="text-[11px] font-mono text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">CME MNQ</span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2.5">
+          <div>
+            <label class="text-slate-400 block mb-1">單口來回手續費 ($/RT)</label>
+            <input id="inpCommission" type="number" step="0.1" min="0" max="50" value="1.50" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none tabular-nums" />
+          </div>
+          <div>
+            <label class="text-slate-400 block mb-1">每跳價值 Tick Value ($)</label>
+            <input id="inpTickValue" type="number" step="0.25" min="0.1" max="100" value="0.50" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none tabular-nums" />
+          </div>
+          <div>
+            <label class="text-slate-400 block mb-1" title="常態市況下每口來回平均滑價跳數（以對數常態右偏分佈抽樣）">基礎滑價 (Ticks/RT)</label>
+            <input id="inpBaseSlippageTicks" type="number" step="0.5" min="0" max="50" value="2.0" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none tabular-nums" />
+          </div>
+          <div>
+            <label class="text-slate-400 block mb-1" title="快市、數據公佈或流動性真空導致 3x~8x 滑價衝擊之發生機率">流動性衝擊機率 (%)</label>
+            <input id="inpShockProb" type="number" step="0.25" min="0" max="25" value="1.5" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none tabular-nums" />
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. Prop Firm Account & Trailing Drawdown Engine -->
+      <section class="bg-slate-900 border border-slate-800 rounded-lg p-3.5 flex flex-col gap-2.5 text-xs">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+          <h2 class="font-mono font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-rose-400"></span>
+            4. 自營商強平與目標機制 (Prop Rules)
+          </h2>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2.5">
+          <div class="col-span-2">
+            <label class="text-slate-400 block mb-1">最大回撤計算模式 (Drawdown Mode)</label>
+            <select id="inpDdMode" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none">
+              <option value="intratrade">3. 盤中最高水位移動回撤 (Intra-Trade MFE HWM)</option>
+              <option value="eod">2. 日終結算移動回撤 (End-of-Day Trailing)</option>
+              <option value="static">1. 固定靜態最大回撤 (Static Max Drawdown)</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="text-slate-400 block mb-1">初始資金 Balance ($)</label>
+            <input id="inpInitialBalance" type="number" step="5000" min="5000" max="2000000" value="50000" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none tabular-nums" />
+          </div>
+          <div>
+            <label class="text-slate-400 block mb-1">最大回撤限額 Max DD ($)</label>
+            <input id="inpMaxDdLimit" type="number" step="250" min="500" max="500000" value="2500" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none tabular-nums" />
+          </div>
+          <div class="col-span-2">
+            <label class="text-slate-400 block mb-1">獲利目標 Profit Target ($)</label>
+            <input id="inpProfitTarget" type="number" step="250" min="500" max="500000" value="3000" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 font-mono text-slate-100 focus:border-sky-500 focus:outline-none tabular-nums" />
+          </div>
+
+          <div class="col-span-2 flex flex-col gap-1.5 pt-1">
+            <label class="flex items-center gap-2 cursor-pointer text-slate-300">
+              <input id="inpLockFloor" type="checkbox" checked class="rounded bg-slate-950 border-slate-700 text-sky-500 focus:ring-0" />
+              <span>強平線觸及初始資金後鎖定 (Lock Trailing Floor at Initial Balance)</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer text-slate-300">
+              <input id="inpStopOnTarget" type="checkbox" checked class="rounded bg-slate-950 border-slate-700 text-sky-500 focus:ring-0" />
+              <span>達到獲利目標即判定通關並停止該路徑 (Stop Path on Target Pass)</span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+    </aside>
+
+    <!-- RIGHT MAIN AREA: Metrics & Visualizations (8 cols on lg, 9 cols on xl) -->
+    <section class="lg:col-span-8 xl:col-span-9 flex flex-col gap-4">
+
+      <!-- Top Row: 5 Key Risk Metric Cards -->
+      <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+        <!-- Card 1: Risk of Ruin -->
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3.5 flex flex-col justify-between">
+          <div class="flex items-center justify-between text-xs text-slate-400">
+            <span>破產/強平機率 (RoR)</span>
+            <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+          </div>
+          <div id="metricRoR" class="text-2xl font-mono font-bold text-rose-400 my-1 tabular-nums">--%</div>
+          <div id="metricRoRSub" class="text-[11px] font-mono text-slate-400">中位數爆倉步數: --</div>
+        </div>
+
+        <!-- Card 2: Target Reach Probability -->
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3.5 flex flex-col justify-between">
+          <div class="flex items-center justify-between text-xs text-slate-400">
+            <span>目標達成率 (Pass Rate)</span>
+            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          </div>
+          <div id="metricTargetProb" class="text-2xl font-mono font-bold text-emerald-400 my-1 tabular-nums">--%</div>
+          <div id="metricTargetSub" class="text-[11px] font-mono text-slate-400">中位數通關交易數: --</div>
+        </div>
+
+        <!-- Card 3: Drawdown Percentiles -->
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3.5 flex flex-col justify-between">
+          <div class="flex items-center justify-between text-xs text-slate-400">
+            <span>最大回撤分位數 (Max DD)</span>
+            <span class="font-mono text-[10px] text-amber-400">50 / 95 / 99%</span>
+          </div>
+          <div id="metricDd50" class="text-xl font-mono font-bold text-amber-300 my-1 tabular-nums">$--</div>
+          <div id="metricDdTail" class="text-[11px] font-mono text-slate-400 tabular-nums">95%: $-- | 99%: $--</div>
+        </div>
+
+        <!-- Card 4: Max Consecutive Losses -->
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3.5 flex flex-col justify-between">
+          <div class="flex items-center justify-between text-xs text-slate-400">
+            <span>95% 極端連敗 (Losing Streak)</span>
+            <span class="font-mono text-[10px] text-indigo-400">P95</span>
+          </div>
+          <div id="metricStreak95" class="text-2xl font-mono font-bold text-indigo-300 my-1 tabular-nums">-- 連敗</div>
+          <div id="metricStreakSub" class="text-[11px] font-mono text-slate-400 tabular-nums">中位數最大連敗: -- 筆</div>
+        </div>
+
+        <!-- Card 5: Return-to-Drawdown & Friction -->
+        <div class="col-span-2 md:col-span-1 bg-slate-900 border border-slate-800 rounded-lg p-3.5 flex flex-col justify-between">
+          <div class="flex items-center justify-between text-xs text-slate-400">
+            <span>報酬/回撤比 (Median Ret/DD)</span>
+            <span class="font-mono text-[10px] text-sky-400">MAR</span>
+          </div>
+          <div id="metricRetDd" class="text-2xl font-mono font-bold text-sky-300 my-1 tabular-nums">--x</div>
+          <div id="metricFrictionDrag" class="text-[11px] font-mono text-slate-400 tabular-nums">單筆摩擦成本: $--</div>
+        </div>
+      </div>
+
+      <!-- Chart 1: Interactive Equity Fan Chart -->
+      <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 flex flex-col gap-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 class="text-xs font-mono font-semibold uppercase tracking-wider text-slate-200 flex items-center gap-2">
+              <span>淨值扇形分佈圖 (Monte Carlo Equity Fan Chart)</span>
+              <span id="simTimingBadge" class="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-sky-400">-- ms</span>
+            </h3>
+            <p class="text-[11px] text-slate-400 mt-0.5">
+              顯示 45 條隨機抽樣路徑（綠=存活/通關，紅=觸及強平線爆倉）以及全體路徑之 P95、P50（中位數）、P05 分位包絡線
+            </p>
+          </div>
+          <div class="flex items-center gap-3 text-[11px] font-mono">
+            <span class="flex items-center gap-1 text-emerald-400"><span class="w-3 h-0.5 bg-emerald-400 inline-block"></span> P95 最佳帶</span>
+            <span class="flex items-center gap-1 text-sky-400"><span class="w-3 h-0.5 bg-sky-400 inline-block"></span> P50 中位數</span>
+            <span class="flex items-center gap-1 text-amber-400"><span class="w-3 h-0.5 bg-amber-400 inline-block"></span> P05 最差帶</span>
+            <span class="flex items-center gap-1 text-rose-400"><span class="w-3 border-b border-dashed border-rose-500 inline-block"></span> 初始強平底線</span>
+          </div>
+        </div>
+        <div class="relative h-[340px] w-full">
+          <canvas id="equityFanChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Bottom Row: Underwater Drawdown Histogram + Quantitative Diagnostics -->
+      <div class="grid grid-cols-1 xl:grid-cols-12 gap-4">
+
+        <!-- Chart 2: Max Drawdown Distribution Histogram (7 cols) -->
+        <div class="xl:col-span-7 bg-slate-900 border border-slate-800 rounded-lg p-4 flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-xs font-mono font-semibold uppercase tracking-wider text-slate-200">
+                最大回撤深度機率分佈 (Max Drawdown Distribution)
+              </h3>
+              <p class="text-[11px] text-slate-400 mt-0.5">
+                統計所有 $N$ 條路徑中出現的最大回撤分佈（紅色區間代表觸發自營商強平門檻）
+              </p>
+            </div>
+          </div>
+          <div class="relative h-[240px] w-full">
+            <canvas id="ddHistChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Quantitative Diagnostic & Microstructure Breakdown (5 cols) -->
+        <div class="xl:col-span-5 bg-slate-900 border border-slate-800 rounded-lg p-4 flex flex-col justify-between gap-3">
+          <div>
+            <h3 class="text-xs font-mono font-semibold uppercase tracking-wider text-slate-200 border-b border-slate-800 pb-2">
+              微結構與風控量化診斷 (Quantitative Diagnostics)
+            </h3>
+            <div class="mt-3 space-y-2 text-xs font-mono">
+              <div class="flex justify-between py-1 border-b border-slate-800/70">
+                <span class="text-slate-400">理論單筆期望值 (毛利 Gross EV):</span>
+                <span id="diagGrossEv" class="text-slate-200 tabular-nums">$--</span>
+              </div>
+              <div class="flex justify-between py-1 border-b border-slate-800/70">
+                <span class="text-slate-400">扣除滑價與手續費後淨期望值 (Net EV):</span>
+                <span id="diagNetEv" class="text-slate-200 tabular-nums">$--</span>
+              </div>
+              <div class="flex justify-between py-1 border-b border-slate-800/70">
+                <span class="text-slate-400">摩擦成本侵蝕毛利比例 (Friction Drag):</span>
+                <span id="diagDragPct" class="text-amber-400 tabular-nums">--%</span>
+              </div>
+              <div class="flex justify-between py-1 border-b border-slate-800/70">
+                <span class="text-slate-400">盤中虛假浮盈強平佔比 (Intra-Trade HWM Kill):</span>
+                <span id="diagPhantomKill" class="text-rose-400 tabular-nums">--%</span>
+              </div>
+              <div class="flex justify-between py-1 border-b border-slate-800/70">
+                <span class="text-slate-400">期末中位數淨值 (Median Terminal Equity):</span>
+                <span id="diagMedianEquity" class="text-sky-400 tabular-nums">$--</span>
+              </div>
+              <div class="flex justify-between py-1">
+                <span class="text-slate-400">未通關亦未爆倉比例 (Time-out %):</span>
+                <span id="diagTimeoutPct" class="text-slate-300 tabular-nums">--%</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="diagVerdictBox" class="p-2.5 rounded bg-slate-950 border border-slate-800 text-[11px] text-slate-300 leading-relaxed">
+            等待模擬結果...
+          </div>
+        </div>
+
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- Embedded JavaScript Engine & Worker -->
+  <script>
+    /*************************************************************************
+     * 1. STATE & PRESETS
+     *************************************************************************/
+    let currentDataSource = 'synthetic'; // 'synthetic' | 'empirical'
+    let empiricalTrades = []; // Array of { pnl, mae, mfe }
+    let equityChartInstance = null;
+    let ddHistChartInstance = null;
+    let activeWorker = null;
+
+    function applyInstrumentPreset(symbol) {
+      const comm = document.getElementById('inpCommission');
+      const tickVal = document.getElementById('inpTickValue');
+      const slip = document.getElementById('inpBaseSlippageTicks');
+      const contracts = document.getElementById('inpContracts');
+      const risk = document.getElementById('inpRiskPerTrade');
+      const badge = document.getElementById('lblInstrumentBadge');
+
+      if (symbol === 'MNQ') {
+        comm.value = '1.50';
+        tickVal.value = '0.50';
+        slip.value = '2.0';
+        contracts.value = '2';
+        risk.value = '250';
+        badge.textContent = 'CME MNQ';
+      } else if (symbol === 'NQ') {
+        comm.value = '4.60';
+        tickVal.value = '5.00';
+        slip.value = '1.5';
+        contracts.value = '1';
+        risk.value = '500';
+        badge.textContent = 'CME NQ';
+      } else if (symbol === 'MES') {
+        comm.value = '1.50';
+        tickVal.value = '1.25';
+        slip.value = '1.0';
+        contracts.value = '3';
+        risk.value = '200';
+        badge.textContent = 'CME MES';
+      } else if (symbol === 'ES') {
+        comm.value = '4.60';
+        tickVal.value = '12.50';
+        slip.value = '1.0';
+        contracts.value = '1';
+        risk.value = '500';
+        badge.textContent = 'CME ES';
+      }
+      runSimulation();
+    }
+
+    function applyPropPreset(preset) {
+      const bal = document.getElementById('inpInitialBalance');
+      const dd = document.getElementById('inpMaxDdLimit');
+      const target = document.getElementById('inpProfitTarget');
+      const mode = document.getElementById('inpDdMode');
+      const lock = document.getElementById('inpLockFloor');
+      const stopTarget = document.getElementById('inpStopOnTarget');
+
+      if (preset === 'APEX_50K') {
+        bal.value = '50000';
+        dd.value = '2500';
+        target.value = '3000';
+        mode.value = 'intratrade';
+        lock.checked = true;
+        stopTarget.checked = true;
+      } else if (preset === 'TOPSTEP_50K') {
+        bal.value = '50000';
+        dd.value = '2000';
+        target.value = '3000';
+        mode.value = 'eod';
+        lock.checked = true;
+        stopTarget.checked = true;
+      } else if (preset === 'STATIC_100K') {
+        bal.value = '100000';
+        dd.value = '5000';
+        target.value = '6000';
+        mode.value = 'static';
+        lock.checked = true;
+        stopTarget.checked = false;
+      }
+      runSimulation();
+    }
+
+    function switchDataSource(mode) {
+      currentDataSource = mode;
+      const tabSyn = document.getElementById('tabSynthetic');
+      const tabEmp = document.getElementById('tabEmpirical');
+      const panSyn = document.getElementById('panelSynthetic');
+      const panEmp = document.getElementById('panelEmpirical');
+
+      if (mode === 'synthetic') {
+        tabSyn.className = 'px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40';
+        tabEmp.className = 'px-2 py-0.5 rounded text-slate-400 hover:text-slate-200';
+        panSyn.classList.remove('hidden');
+        panEmp.classList.add('hidden');
+        panEmp.classList.remove('flex');
+      } else {
+        tabEmp.className = 'px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40';
+        tabSyn.className = 'px-2 py-0.5 rounded text-slate-400 hover:text-slate-200';
+        panSyn.classList.add('hidden');
+        panEmp.classList.remove('hidden');
+        panEmp.classList.add('flex');
+        if (document.getElementById('inpCsvText').value.trim() === '') {
+          loadSampleCSV();
+        }
+      }
+      runSimulation();
+    }
+
+    function loadSampleCSV() {
+      // Realistic clustered MNQ trades: PnL ($), MAE ($), MFE ($)
+      const sampleRows = [
+        "420, -110, 560", "380, -95, 440", "-250, -260, 140", "510, -80, 620",
+        "-250, -255, 60", "-260, -270, 40", "-250, -250, 20", "190, -180, 410",
+        "460, -70, 520", "390, -120, 480", "-250, -255, 180", "610, -60, 690",
+        "-245, -250, 90", "-255, -260, 30", "-250, -255, 15", "-260, -275, 50",
+        "410, -100, 510", "440, -85, 530", "350, -130, 470", "-250, -250, 110",
+        "520, -45, 590", "-250, -260, 75", "395, -110, 495", "480, -90, 550",
+        "-250, -255, 160", "-255, -265, 45", "310, -140, 460", "450, -75, 520",
+        "-250, -250, 85", "580, -50, 640", "405, -95, 475", "-250, -255, 120"
+      ];
+      document.getElementById('inpCsvText').value = sampleRows.join('\n');
+      document.getElementById('inpCsvUnit').value = 'USD';
+      parseCsvInput();
+    }
+
+    function handleCsvFileUpload(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        document.getElementById('inpCsvText').value = evt.target.result;
+        parseCsvInput();
+        runSimulation();
+      };
+      reader.readAsText(file);
+    }
+
+    function parseCsvInput() {
+      const raw = document.getElementById('inpCsvText').value.trim();
+      const unit = document.getElementById('inpCsvUnit').value;
+      const riskPerTrade = parseFloat(document.getElementById('inpRiskPerTrade').value) || 250;
+      const excursionFactor = parseFloat(document.getElementById('inpExcursion').value) || 0.45;
+      const multiplier = (unit === 'R') ? riskPerTrade : 1.0;
+
+      const lines = raw.split(/\r?\n/);
+      const parsed = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line || line.startsWith('#') || /^[a-zA-Z]/.test(line)) continue;
+        const cols = line.split(/[,\t;]+/).map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+        if (cols.length >= 1) {
+          const pnl = cols[0] * multiplier;
+          let mae, mfe;
+          if (cols.length >= 3) {
+            mae = Math.min(0, cols[1] * multiplier, pnl);
+            mfe = Math.max(0, cols[2] * multiplier, pnl);
+          } else {
+            // Estimate excursion if only 1 column provided
+            const scale = Math.abs(pnl) > 0 ? Math.abs(pnl) : riskPerTrade;
+            if (pnl >= 0) {
+              mae = -scale * excursionFactor * 0.65;
+              mfe = pnl + scale * excursionFactor * 0.55;
+            } else {
+              mae = pnl - scale * 0.12;
+              mfe = scale * excursionFactor * 0.6;
+            }
+          }
+          parsed.push({ pnl, mae, mfe });
+        }
+      }
+
+      empiricalTrades = parsed;
+      const statusEl = document.getElementById('csvParseStatus');
+      if (parsed.length > 0) {
+        statusEl.textContent = `已成功解析 ${parsed.length} 筆交易序列`;
+        statusEl.className = 'text-[11px] font-mono text-emerald-400';
+      } else {
+        statusEl.textContent = '解析失敗：請輸入有效數值';
+        statusEl.className = 'text-[11px] font-mono text-rose-400';
+      }
+      return parsed;
+    }
+
+    /*************************************************************************
+     * 2. INLINE WEB WORKER CODE (High-Speed Float64Array Monte Carlo Engine)
+     *************************************************************************/
+    const workerCode = `
+      // Box-Muller transform for standard normal random variable
+      function randn() {
+        let u = 0, v = 0;
+        while (u === 0) u = Math.random();
+        while (v === 0) v = Math.random();
+        return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+      }
+
+      // Quick percentile helper on sorted Float64Array
+      function getPercentile(sortedArr, p) {
+        if (sortedArr.length === 0) return 0;
+        const idx = (sortedArr.length - 1) * p;
+        const lo = Math.floor(idx);
+        const hi = Math.ceil(idx);
+        if (lo === hi) return sortedArr[lo];
+        return sortedArr[lo] + (sortedArr[hi] - sortedArr[lo]) * (idx - lo);
+      }
+
+      self.onmessage = function(e) {
+        const cfg = e.data;
+        const t0 = performance.now();
+
+        const N = cfg.paths;
+        const T = cfg.trades;
+        const M = cfg.baseTapePnl.length;
+        const basePnl = cfg.baseTapePnl;
+        const baseMae = cfg.baseTapeMae;
+        const baseMfe = cfg.baseTapeMfe;
+
+        const blockSize = Math.max(1, cfg.blockSize);
+        const pGeom = 1.0 / blockSize; // Politis & Romano jump probability
+        const method = cfg.bootstrapMethod; // 'stationary' | 'circular' | 'iid'
+
+        const initialBalance = cfg.initialBalance;
+        const maxDdLimit = cfg.maxDdLimit;
+        const profitTarget = cfg.profitTarget;
+        const targetEquity = initialBalance + profitTarget;
+        const ddMode = cfg.ddMode; // 'static' | 'eod' | 'intratrade'
+        const lockFloor = cfg.lockFloor;
+        const stopOnTarget = cfg.stopOnTarget;
+        const tradesPerDay = Math.max(1, cfg.tradesPerDay);
+
+        // Friction parameters
+        const contracts = cfg.contracts;
+        const fixedCommPerTrade = cfg.commission * contracts;
+        const baseSlipDollars = cfg.baseSlippageTicks * cfg.tickValue * contracts;
+        const shockProb = cfg.shockProb / 100.0;
+
+        // Output storage (TypedArrays for speed)
+        const maxDrawdowns = new Float64Array(N);
+        const terminalEquities = new Float64Array(N);
+        const maxLosingStreaks = new Float64Array(N);
+        const returnToDdRatios = new Float64Array(N);
+
+        // Track curve percentiles at each step t = 0..T
+        // Store full matrix N * (T + 1) in a flat Float64Array for exact step-by-step percentiles
+        const allPathsMatrix = new Float64Array(N * (T + 1));
+
+        // Sample paths for chart visualization (up to 45 paths)
+        const sampleCount = Math.min(45, N);
+        const sampleCurves = new Float64Array(sampleCount * (T + 1));
+        const sampleStatus = new Uint8Array(sampleCount); // 0=alive/timeout, 1=ruined, 2=passed
+
+        let ruinedCount = 0;
+        let intraTradePhantomKillCount = 0;
+        let targetReachedCount = 0;
+        const ruinSteps = [];
+        const passSteps = [];
+
+        let totalFrictionDollars = 0;
+        let totalSimulatedTrades = 0;
+
+        // Progress reporting interval
+        const reportEvery = Math.max(50, Math.floor(N / 20));
+
+        for (let i = 0; i < N; i++) {
+          let equity = initialBalance;
+          let peakEquity = initialBalance;
+          let trailingFloor = initialBalance - maxDdLimit;
+
+          let maxDdForPath = 0;
+          let curLossStreak = 0;
+          let maxLossStreak = 0;
+          let pathStatus = 0; // 0=active, 1=ruined, 2=passed
+
+          const rowOffset = i * (T + 1);
+          allPathsMatrix[rowOffset] = initialBalance;
+
+          // Bootstrap pointer initialization
+          let curIdx = Math.floor(Math.random() * M);
+          let curBlockRemaining = blockSize;
+
+          for (let t = 1; t <= T; t++) {
+            if (pathStatus !== 0) {
+              // Path already terminated (ruined or passed target) -> flatline equity
+              allPathsMatrix[rowOffset + t] = equity;
+              continue;
+            }
+
+            // 1. Advance index via selected resampling scheme
+            if (method === 'iid') {
+              curIdx = Math.floor(Math.random() * M);
+            } else if (method === 'stationary') {
+              if (t > 1) {
+                if (Math.random() < pGeom) {
+                  curIdx = Math.floor(Math.random() * M);
+                } else {
+                  curIdx = (curIdx + 1) % M;
+                }
+              }
+            } else {
+              // Circular Block Bootstrap (fixed block length B)
+              if (t > 1) {
+                curBlockRemaining--;
+                if (curBlockRemaining <= 0) {
+                  curIdx = Math.floor(Math.random() * M);
+                  curBlockRemaining = blockSize;
+                } else {
+                  curIdx = (curIdx + 1) % M;
+                }
+              }
+            }
+
+            const grossPnl = basePnl[curIdx];
+            const grossMae = baseMae[curIdx];
+            const grossMfe = baseMfe[curIdx];
+
+            // 2. Stochastic Right-Skewed Fat-Tail Slippage + Liquidity Shock
+            let slipDollars = 0;
+            if (baseSlipDollars > 0) {
+              // Log-normal factor with median ~ 0.85, mean ~ 1.0, right fat tail
+              const z = randn();
+              let slipMult = Math.exp(-0.18 + 0.55 * z);
+              if (Math.random() < shockProb) {
+                // Liquidity shock event: 3x to 8x multiplier
+                slipMult *= (3.0 + Math.random() * 5.0);
+              }
+              slipDollars = baseSlipDollars * slipMult;
+            }
+
+            const friction = fixedCommPerTrade + slipDollars;
+            totalFrictionDollars += friction;
+            totalSimulatedTrades++;
+
+            const netPnl = grossPnl - friction;
+            const netMae = Math.min(grossMae - friction * 0.6, netPnl);
+            const netMfe = Math.max(0, grossMfe - friction * 0.4, netPnl);
+
+            // Track consecutive losses
+            if (netPnl < 0) {
+              curLossStreak++;
+              if (curLossStreak > maxLossStreak) maxLossStreak = curLossStreak;
+            } else {
+              curLossStreak = 0;
+            }
+
+            // 3. Account Equity & Drawdown Engine
+            if (ddMode === 'intratrade') {
+              // Step 3a: Check if intra-trade MAE breaches current trailing floor
+              const intraLow = equity + netMae;
+              const intraPeak = equity + netMfe;
+
+              if (intraLow <= trailingFloor) {
+                // Check if a closed-trade model would NOT have been ruined here
+                if (equity + netPnl > (peakEquity - maxDdLimit)) {
+                  intraTradePhantomKillCount++;
+                }
+                equity = trailingFloor;
+                pathStatus = 1;
+                ruinedCount++;
+                ruinSteps.push(t);
+                const ddNow = Math.max(maxDdForPath, peakEquity - equity);
+                maxDdForPath = Math.max(maxDdForPath, ddNow, maxDdLimit);
+                allPathsMatrix[rowOffset + t] = equity;
+                continue;
+              }
+
+              // Step 3b: Update Intra-Trade High-Water Mark from unrealized MFE
+              if (intraPeak > peakEquity) {
+                peakEquity = intraPeak;
+                let candidateFloor = peakEquity - maxDdLimit;
+                if (lockFloor && candidateFloor > initialBalance) {
+                  candidateFloor = initialBalance;
+                }
+                if (candidateFloor > trailingFloor) {
+                  trailingFloor = candidateFloor;
+                }
+              }
+
+              // Step 3c: Settle trade at closed Net PnL and check if post-MFE pullback breached the newly raised floor!
+              equity += netPnl;
+              const curDd = peakEquity - equity;
+              if (curDd > maxDdForPath) maxDdForPath = curDd;
+
+              if (equity <= trailingFloor) {
+                intraTradePhantomKillCount++;
+                equity = trailingFloor;
+                pathStatus = 1;
+                ruinedCount++;
+                ruinSteps.push(t);
+                maxDdForPath = Math.max(maxDdForPath, maxDdLimit);
+                allPathsMatrix[rowOffset + t] = equity;
+                continue;
+              }
+
+            } else if (ddMode === 'eod') {
+              // EOD Mode: Intra-day check against fixed floor for the day; floor only trails at end of day
+              const intraLow = equity + netMae;
+              equity += netPnl;
+
+              // Track true peak for drawdown reporting
+              if (equity > peakEquity) {
+                peakEquity = equity;
+              }
+              const curDd = peakEquity - Math.min(equity, intraLow);
+              if (curDd > maxDdForPath) maxDdForPath = curDd;
+
+              if (equity <= trailingFloor || intraLow <= trailingFloor) {
+                equity = trailingFloor;
+                pathStatus = 1;
+                ruinedCount++;
+                ruinSteps.push(t);
+                maxDdForPath = Math.max(maxDdForPath, maxDdLimit);
+                allPathsMatrix[rowOffset + t] = equity;
+                continue;
+              }
+
+              // End-of-day HWM update
+              if (t % tradesPerDay === 0) {
+                let candidateFloor = peakEquity - maxDdLimit;
+                if (lockFloor && candidateFloor > initialBalance) {
+                  candidateFloor = initialBalance;
+                }
+                if (candidateFloor > trailingFloor) {
+                  trailingFloor = candidateFloor;
+                }
+              }
+
+            } else {
+              // Static Max Drawdown Mode: Floor is permanently fixed at initialBalance - maxDdLimit
+              const intraLow = equity + netMae;
+              equity += netPnl;
+              if (equity > peakEquity) peakEquity = equity;
+              const curDd = peakEquity - Math.min(equity, intraLow);
+              if (curDd > maxDdForPath) maxDdForPath = curDd;
+
+              if (equity <= trailingFloor || intraLow <= trailingFloor) {
+                equity = trailingFloor;
+                pathStatus = 1;
+                ruinedCount++;
+                ruinSteps.push(t);
+                maxDdForPath = Math.max(maxDdForPath, maxDdLimit);
+                allPathsMatrix[rowOffset + t] = equity;
+                continue;
+              }
+            }
+
+            // 4. Check Profit Target Reach
+            if (equity >= targetEquity) {
+              if (stopOnTarget) {
+                pathStatus = 2;
+                targetReachedCount++;
+                passSteps.push(t);
+              } else {
+                // Mark as reached if not already counted
+                if (pathStatus === 0) {
+                  // Track pass without stopping by using negative flag or separate check
+                }
+              }
+            }
+
+            allPathsMatrix[rowOffset + t] = equity;
+          }
+
+          // If stopOnTarget is false, check if peak Equity ever reached targetEquity
+          if (!stopOnTarget && pathStatus !== 1) {
+            for (let t = 1; t <= T; t++) {
+              if (allPathsMatrix[rowOffset + t] >= targetEquity) {
+                targetReachedCount++;
+                passSteps.push(t);
+                pathStatus = 2;
+                break;
+              }
+            }
+          }
+
+          maxDrawdowns[i] = maxDdForPath;
+          terminalEquities[i] = equity;
+          maxLosingStreaks[i] = maxLossStreak;
+          const netRet = equity - initialBalance;
+          returnToDdRatios[i] = maxDdForPath > 1 ? (netRet / maxDdForPath) : (netRet > 0 ? 10 : 0);
+
+          if (i < sampleCount) {
+            sampleStatus[i] = pathStatus;
+            const sampleOffset = i * (T + 1);
+            for (let t = 0; t <= T; t++) {
+              sampleCurves[sampleOffset + t] = allPathsMatrix[rowOffset + t];
+            }
+          }
+
+          if (i % reportEvery === 0) {
+            self.postMessage({ type: 'progress', progress: Math.round((i / N) * 90) });
+          }
+        }
+
+        // Compute Step-by-Step Percentile Curves (P05, P50, P95)
+        const p05Curve = new Float64Array(T + 1);
+        const p50Curve = new Float64Array(T + 1);
+        const p95Curve = new Float64Array(T + 1);
+        const stepBuffer = new Float64Array(N);
+
+        // Downsample step percentile calculation if T > 150 for speed, or compute every step
+        for (let t = 0; t <= T; t++) {
+          for (let i = 0; i < N; i++) {
+            stepBuffer[i] = allPathsMatrix[i * (T + 1) + t];
+          }
+          stepBuffer.sort();
+          p05Curve[t] = getPercentile(stepBuffer, 0.05);
+          p50Curve[t] = getPercentile(stepBuffer, 0.50);
+          p95Curve[t] = getPercentile(stepBuffer, 0.95);
+        }
+
+        // Sort summary arrays for percentile extraction
+        const sortedDd = new Float64Array(maxDrawdowns).sort();
+        const sortedStreaks = new Float64Array(maxLosingStreaks).sort();
+        const sortedRetDd = new Float64Array(returnToDdRatios).sort();
+        const sortedTermEq = new Float64Array(terminalEquities).sort();
+        ruinSteps.sort((a, b) => a - b);
+        passSteps.sort((a, b) => a - b);
+
+        const elapsedMs = Math.round(performance.now() - t0);
+
+        self.postMessage({
+          type: 'complete',
+          elapsedMs,
+          ruinedCount,
+          targetReachedCount,
+          intraTradePhantomKillCount,
+          medianRuinStep: ruinSteps.length ? ruinSteps[Math.floor(ruinSteps.length / 2)] : 0,
+          medianPassStep: passSteps.length ? passSteps[Math.floor(passSteps.length / 2)] : 0,
+          dd50: getPercentile(sortedDd, 0.50),
+          dd95: getPercentile(sortedDd, 0.95),
+          dd99: getPercentile(sortedDd, 0.99),
+          streak50: getPercentile(sortedStreaks, 0.50),
+          streak95: getPercentile(sortedStreaks, 0.95),
+          medianRetDd: getPercentile(sortedRetDd, 0.50),
+          medianTerminalEquity: getPercentile(sortedTermEq, 0.50),
+          avgFrictionPerTrade: totalSimulatedTrades > 0 ? (totalFrictionDollars / totalSimulatedTrades) : 0,
+          p05Curve,
+          p50Curve,
+          p95Curve,
+          sampleCurves,
+          sampleStatus,
+          sampleCount,
+          maxDrawdowns
+        }, [
+          p05Curve.buffer,
+          p50Curve.buffer,
+          p95Curve.buffer,
+          sampleCurves.buffer,
+          sampleStatus.buffer,
+          maxDrawdowns.buffer
+        ]);
+      };
+    `;
+
+    /*************************************************************************
+     * 3. SYNTHETIC BASE TAPE GENERATOR (Markov Regime & Autocorrelated Streaks)
+     *************************************************************************/
+    function generateSyntheticBaseTape(cfg) {
+      const M = 2000; // Base empirical pool size
+      const pWin = Math.min(0.95, Math.max(0.05, cfg.winRate / 100.0));
+      const pLoss = 1.0 - pWin;
+      const rho = Math.min(0.65, Math.max(-0.45, cfg.autocorr));
+      const risk = cfg.riskPerTrade;
+      const winAmount = risk * cfg.payoff;
+      const exFactor = cfg.excursion;
+
+      // Transition probabilities preserving unconditional win rate pWin and autocorrelation rho
+      // P(Loss | Loss) = pLoss + rho * pWin
+      // P(Loss | Win)  = pLoss * (1 - rho)
+      const pLossGivenLoss = Math.min(0.98, Math.max(0.02, pLoss + rho * pWin));
+      const pLossGivenWin = Math.min(0.98, Math.max(0.02, pLoss * (1.0 - rho)));
+
+      const pnlArr = new Float64Array(M);
+      const maeArr = new Float64Array(M);
+      const mfeArr = new Float64Array(M);
+
+      let prevIsLoss = Math.random() < pLoss;
+      let volRegime = 1.0;
+
+      for (let i = 0; i < M; i++) {
+        const probLoss = prevIsLoss ? pLossGivenLoss : pLossGivenWin;
+        const isLoss = Math.random() < probLoss;
+        prevIsLoss = isLoss;
+
+        // Mild GARCH-like volatility clustering
+        const shock = 0.85 + 0.30 * Math.random();
+        volRegime = 0.75 * volRegime + 0.25 * shock;
+
+        if (!isLoss) {
+          // Winning trade with realistic dispersion around R:R
+          const u = 0.65 + 0.70 * Math.random();
+          const pnl = winAmount * u * volRegime;
+          // Intra-trade heat (MAE) on winning trade & MFE overshoot before close
+          const heat = -risk * exFactor * (0.25 + 0.75 * Math.random());
+          const overshoot = pnl + risk * exFactor * (0.30 + 0.90 * Math.random());
+
+          pnlArr[i] = pnl;
+          maeArr[i] = Math.min(0, heat);
+          mfeArr[i] = Math.max(pnl, overshoot);
+        } else {
+          // Losing trade (centered near -1R with slight fat-tail stop variance)
+          const stopVar = 0.90 + 0.20 * Math.random();
+          const pnl = -risk * stopVar * volRegime;
+          // Losing trade often goes positive first (unrealized MFE) before reversing to stop!
+          // This is the exact mechanism that causes Intra-Trade HWM phantom drawdown erosion.
+          const unrealizedPeak = risk * exFactor * (0.20 + 1.15 * Math.random());
+          const worstDip = pnl - risk * 0.08 * Math.random();
+
+          pnlArr[i] = pnl;
+          maeArr[i] = Math.min(pnl, worstDip);
+          mfeArr[i] = Math.max(0, unrealizedPeak);
+        }
+      }
+
+      return { pnlArr, maeArr, mfeArr };
+    }
+
+    /*************************************************************************
+     * 4. MAIN SIMULATION CONTROLLER
+     *************************************************************************/
+    function runSimulation() {
+      const progressBar = document.getElementById('simProgressBar');
+      const runBtnText = document.getElementById('runBtnText');
+      progressBar.style.width = '12%';
+      runBtnText.textContent = '運算中 (SIMULATING...)';
+
+      // Gather inputs
+      const cfg = {
+        winRate: parseFloat(document.getElementById('inpWinRate').value) || 46,
+        payoff: parseFloat(document.getElementById('inpPayoff').value) || 1.65,
+        riskPerTrade: parseFloat(document.getElementById('inpRiskPerTrade').value) || 250,
+        autocorr: parseFloat(document.getElementById('inpAutocorr').value) || 0.18,
+        excursion: parseFloat(document.getElementById('inpExcursion').value) || 0.45,
+        bootstrapMethod: document.getElementById('inpBootstrapMethod').value,
+        blockSize: parseInt(document.getElementById('inpBlockSize').value, 10) || 7,
+        paths: Math.min(10000, Math.max(100, parseInt(document.getElementById('inpPaths').value, 10) || 2500)),
+        trades: Math.min(1500, Math.max(20, parseInt(document.getElementById('inpTrades').value, 10) || 250)),
+        tradesPerDay: Math.max(1, parseInt(document.getElementById('inpTradesPerDay').value, 10) || 5),
+        contracts: Math.max(1, parseInt(document.getElementById('inpContracts').value, 10) || 2),
+        commission: parseFloat(document.getElementById('inpCommission').value) || 0,
+        tickValue: parseFloat(document.getElementById('inpTickValue').value) || 0.5,
+        baseSlippageTicks: parseFloat(document.getElementById('inpBaseSlippageTicks').value) || 0,
+        shockProb: parseFloat(document.getElementById('inpShockProb').value) || 0,
+        ddMode: document.getElementById('inpDdMode').value,
+        initialBalance: parseFloat(document.getElementById('inpInitialBalance').value) || 50000,
+        maxDdLimit: parseFloat(document.getElementById('inpMaxDdLimit').value) || 2500,
+        profitTarget: parseFloat(document.getElementById('inpProfitTarget').value) || 3000,
+        lockFloor: document.getElementById('inpLockFloor').checked,
+        stopOnTarget: document.getElementById('inpStopOnTarget').checked
+      };
+
+      // Build Base Tape (either Synthetic or Empirical CSV)
+      let baseTapePnl, baseTapeMae, baseTapeMfe;
+      let grossEvPerTrade = 0;
+
+      if (currentDataSource === 'empirical') {
+        const parsed = parseCsvInput();
+        if (parsed.length === 0) {
+          loadSampleCSV();
+        }
+        const M = empiricalTrades.length;
+        baseTapePnl = new Float64Array(M);
+        baseTapeMae = new Float64Array(M);
+        baseTapeMfe = new Float64Array(M);
+        let sum = 0;
+        for (let i = 0; i < M; i++) {
+          baseTapePnl[i] = empiricalTrades[i].pnl;
+          baseTapeMae[i] = empiricalTrades[i].mae;
+          baseTapeMfe[i] = empiricalTrades[i].mfe;
+          sum += empiricalTrades[i].pnl;
+        }
+        grossEvPerTrade = sum / M;
+      } else {
+        const tape = generateSyntheticBaseTape(cfg);
+        baseTapePnl = tape.pnlArr;
+        baseTapeMae = tape.maeArr;
+        baseTapeMfe = tape.mfeArr;
+        const pW = cfg.winRate / 100.0;
+        grossEvPerTrade = (pW * cfg.riskPerTrade * cfg.payoff) - ((1.0 - pW) * cfg.riskPerTrade);
+      }
+
+      if (activeWorker) {
+        activeWorker.terminate();
+      }
+
+      const blob = new Blob([workerCode], { type: 'application/javascript' });
+      const workerUrl = URL.createObjectURL(blob);
+      activeWorker = new Worker(workerUrl);
+
+      activeWorker.onmessage = function(evt) {
+        const data = evt.data;
+        if (data.type === 'progress') {
+          progressBar.style.width = data.progress + '%';
+        } else if (data.type === 'complete') {
+          progressBar.style.width = '100%';
+          runBtnText.textContent = '執行蒙地卡羅模擬 (RUN)';
+          setTimeout(() => { progressBar.style.width = '0%'; }, 350);
+          updateDashboardUI(cfg, data, grossEvPerTrade);
+          URL.revokeObjectURL(workerUrl);
+        }
+      };
+
+      activeWorker.postMessage({
+        ...cfg,
+        baseTapePnl,
+        baseTapeMae,
+        baseTapeMfe
+      }, [baseTapePnl.buffer, baseTapeMae.buffer, baseTapeMfe.buffer]);
+    }
+
+    /*************************************************************************
+     * 5. UI & CHART.JS RENDERERS
+     *************************************************************************/
+    function formatUSD(val) {
+      const sign = val < 0 ? '-' : '';
+      return sign + '$' + Math.round(Math.abs(val)).toLocaleString('en-US');
+    }
+
+    function updateDashboardUI(cfg, res, grossEv) {
+      const N = cfg.paths;
+      const rorPct = (res.ruinedCount / N) * 100;
+      const passPct = (res.targetReachedCount / N) * 100;
+      const timeoutPct = Math.max(0, 100 - rorPct - passPct);
+
+      // 1. Metric Cards
+      const elRoR = document.getElementById('metricRoR');
+      elRoR.textContent = rorPct.toFixed(1) + '%';
+      elRoR.className = `text-2xl font-mono font-bold my-1 tabular-nums ${rorPct > 25 ? 'text-rose-400' : rorPct > 10 ? 'text-amber-400' : 'text-emerald-400'}`;
+      document.getElementById('metricRoRSub').textContent = res.ruinedCount > 0
+        ? `中位數爆倉步數: 第 ${res.medianRuinStep} 筆 (${(res.medianRuinStep / cfg.tradesPerDay).toFixed(1)} 日)`
+        : '無路徑觸及強平線';
+
+      const elPass = document.getElementById('metricTargetProb');
+      elPass.textContent = passPct.toFixed(1) + '%';
+      document.getElementById('metricTargetSub').textContent = res.targetReachedCount > 0
+        ? `中位數通關步數: 第 ${res.medianPassStep} 筆 (${(res.medianPassStep / cfg.tradesPerDay).toFixed(1)} 日)`
+        : '無路徑達成目標';
+
+      document.getElementById('metricDd50').textContent = formatUSD(res.dd50);
+      document.getElementById('metricDdTail').textContent = `95%: ${formatUSD(res.dd95)} | 99%: ${formatUSD(res.dd99)}`;
+
+      document.getElementById('metricStreak95').textContent = `${Math.round(res.streak95)} 連敗`;
+      document.getElementById('metricStreakSub').textContent = `中位數最大連敗: ${Math.round(res.streak50)} 筆`;
+
+      document.getElementById('metricRetDd').textContent = res.medianRetDd.toFixed(2) + 'x';
+      document.getElementById('metricFrictionDrag').textContent = `單筆摩擦成本: $${res.avgFrictionPerTrade.toFixed(2)}`;
+
+      document.getElementById('simTimingBadge').textContent = `${N.toLocaleString()} 路徑 × ${cfg.trades} 筆 // ${res.elapsedMs} ms`;
+
+      // 2. Quantitative Diagnostics Panel
+      const netEv = grossEv - res.avgFrictionPerTrade;
+      const dragPct = grossEv > 0 ? (res.avgFrictionPerTrade / grossEv) * 100 : 100;
+      const phantomKillPct = res.ruinedCount > 0 ? (res.intraTradePhantomKillCount / res.ruinedCount) * 100 : 0;
+
+      document.getElementById('diagGrossEv').textContent = (grossEv >= 0 ? '+' : '') + '$' + grossEv.toFixed(2);
+      const elNetEv = document.getElementById('diagNetEv');
+      elNetEv.textContent = (netEv >= 0 ? '+' : '') + '$' + netEv.toFixed(2);
+      elNetEv.className = `tabular-nums font-semibold ${netEv > 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+
+      document.getElementById('diagDragPct').textContent = grossEv > 0 ? `${dragPct.toFixed(1)}%` : '毛利為負 (N/A)';
+      document.getElementById('diagPhantomKill').textContent = cfg.ddMode === 'intratrade'
+        ? `${phantomKillPct.toFixed(1)}% (${res.intraTradePhantomKillCount} 條路徑)`
+        : '僅適用於盤中 HWM 模式';
+      document.getElementById('diagMedianEquity').textContent = formatUSD(res.medianTerminalEquity);
+      document.getElementById('diagTimeoutPct').textContent = `${timeoutPct.toFixed(1)}%`;
+
+      // Objective Verdict Box
+      const verdictEl = document.getElementById('diagVerdictBox');
+      let verdictHtml = '';
+      if (netEv <= 0) {
+        verdictHtml = `<span class="text-rose-400 font-semibold">[負期望值警告]</span> 扣除動態滑價與手續費後，單筆淨期望值為 <span class="font-mono">${netEv.toFixed(2)} USD</span>。在任何回撤規則下長期破產率均趨近 100%，必須降低交易頻率、減少口數或提高單筆賺賠比。`;
+      } else if (rorPct > 35) {
+        verdictHtml = `<span class="text-amber-400 font-semibold">[部位過大 / 高強平風險]</span> 策略雖具正期望值（+$${netEv.toFixed(1)}/筆），但在平均區塊長度 $B=${cfg.blockSize}$ 的非獨立連敗衝擊下，強平率高達 <span class="font-mono text-rose-400">${rorPct.toFixed(1)}%</span>。建議將單筆風險由 $${cfg.riskPerTrade} 下調約 30%~40%。`;
+      } else {
+        verdictHtml = `<span class="text-emerald-400 font-semibold">[風控結構穩健]</span> 單筆淨期望值 +$${netEv.toFixed(1)}（摩擦侵蝕 ${dragPct.toFixed(1)}%），在考量波動率叢聚與尾部滑價衝擊後，通關率達 <span class="font-mono text-emerald-400">${passPct.toFixed(1)}%</span>，破產率控制在 <span class="font-mono">${rorPct.toFixed(1)}%</span>。`;
+      }
+      verdictEl.innerHTML = verdictHtml;
+
+      // 3. Render Charts
+      renderEquityFanChart(cfg, res);
+      renderDrawdownHistogram(cfg, res);
+    }
+
+    function renderEquityFanChart(cfg, res) {
+      const ctx = document.getElementById('equityFanChart').getContext('2d');
+      const T = cfg.trades;
+
+      // Downsample X-axis points if T > 250 for smooth canvas rendering
+      const stride = T > 300 ? Math.ceil(T / 200) : 1;
+      const labels = [];
+      const indices = [];
+      for (let t = 0; t <= T; t += stride) {
+        labels.push(t);
+        indices.push(t);
+      }
+      if (indices[indices.length - 1] !== T) {
+        labels.push(T);
+        indices.push(T);
+      }
+
+      const extractSeries = (arr) => indices.map(idx => arr[idx]);
+
+      const datasets = [
+        {
+          label: 'P95 (95th Percentile)',
+          data: extractSeries(res.p95Curve),
+          borderColor: '#34d399',
+          borderWidth: 2.2,
+          pointRadius: 0,
+          tension: 0.15,
+          order: 1
+        },
+        {
+          label: 'P50 (Median 中位數)',
+          data: extractSeries(res.p50Curve),
+          borderColor: '#38bdf8',
+          borderWidth: 2.6,
+          pointRadius: 0,
+          tension: 0.15,
+          order: 1
+        },
+        {
+          label: 'P05 (5th Percentile)',
+          data: extractSeries(res.p05Curve),
+          borderColor: '#fbbf24',
+          borderWidth: 2.2,
+          pointRadius: 0,
+          tension: 0.15,
+          order: 1
+        },
+        {
+          label: '獲利目標線 (Profit Target)',
+          data: indices.map(() => cfg.initialBalance + cfg.profitTarget),
+          borderColor: 'rgba(52, 211, 153, 0.55)',
+          borderWidth: 1.3,
+          borderDash: [4, 4],
+          pointRadius: 0,
+          order: 2
+        },
+        {
+          label: '初始強平底線 (Initial Liquidation Floor)',
+          data: indices.map(() => cfg.initialBalance - cfg.maxDdLimit),
+          borderColor: 'rgba(244, 63, 94, 0.85)',
+          borderWidth: 1.6,
+          borderDash: [6, 4],
+          pointRadius: 0,
+          order: 2
+        }
+      ];
+
+      // Add 45 faint representative sample paths
+      for (let s = 0; s < res.sampleCount; s++) {
+        const offset = s * (T + 1);
+        const status = res.sampleStatus[s];
+        const pathData = indices.map(idx => res.sampleCurves[offset + idx]);
+        datasets.push({
+          label: `Sample #${s + 1}`,
+          data: pathData,
+          borderColor: status === 1
+            ? 'rgba(244, 63, 94, 0.16)'
+            : status === 2
+              ? 'rgba(52, 211, 153, 0.14)'
+              : 'rgba(148, 163, 184, 0.12)',
+          borderWidth: 1,
+          pointRadius: 0,
+          tension: 0.1,
+          order: 10
+        });
+      }
+
+      if (equityChartInstance) {
+        equityChartInstance.destroy();
+      }
+
+      equityChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          interaction: {
+            mode: 'index',
+            intersect: false
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(8, 13, 26, 0.95)',
+              borderColor: '#334155',
+              borderWidth: 1,
+              titleFont: { family: 'JetBrains Mono', size: 11 },
+              bodyFont: { family: 'JetBrains Mono', size: 11 },
+              filter: function(item) {
+                return item.datasetIndex < 5;
+              },
+              callbacks: {
+                title: (items) => `第 ${items[0].label} 筆交易`,
+                label: (item) => `${item.dataset.label}: $${Math.round(item.raw).toLocaleString()}`
+              }
+            }
+          },
+          scales: {
+            x: {
+              grid: { color: 'rgba(30, 41, 59, 0.5)' },
+              ticks: {
+                color: '#64748b',
+                font: { family: 'JetBrains Mono', size: 10 },
+                maxTicksLimit: 12
+              },
+              title: {
+                display: true,
+                text: '交易序列步數 (Trade Number t)',
+                color: '#64748b',
+                font: { family: 'JetBrains Mono', size: 10 }
+              }
+            },
+            y: {
+              grid: { color: 'rgba(30, 41, 59, 0.5)' },
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'JetBrains Mono', size: 10 },
+                callback: (v) => '$' + v.toLocaleString()
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function renderDrawdownHistogram(cfg, res) {
+      const ctx = document.getElementById('ddHistChart').getContext('2d');
+      const dds = res.maxDrawdowns;
+      const N = dds.length;
+      const maxLimit = cfg.maxDdLimit;
+
+      // Build 20 histogram bins from $0 up to max(maxLimit * 1.15, P99)
+      const upperBound = Math.max(maxLimit * 1.15, res.dd99 * 1.05, 500);
+      const binCount = 20;
+      const binWidth = upperBound / binCount;
+      const counts = new Array(binCount).fill(0);
+
+      for (let i = 0; i < N; i++) {
+        const val = dds[i];
+        let b = Math.floor(val / binWidth);
+        if (b >= binCount) b = binCount - 1;
+        if (b < 0) b = 0;
+        counts[b]++;
+      }
+
+      const labels = [];
+      const bgColors = [];
+      const borderColors = [];
+
+      for (let b = 0; b < binCount; b++) {
+        const start = b * binWidth;
+        const end = (b + 1) * binWidth;
+        labels.push('$' + Math.round(start));
+        const isRuinZone = end >= maxLimit * 0.99;
+        bgColors.push(isRuinZone ? 'rgba(244, 63, 94, 0.55)' : 'rgba(56, 189, 248, 0.45)');
+        borderColors.push(isRuinZone ? '#f43f5e' : '#38bdf8');
+      }
+
+      const pctData = counts.map(c => Number(((c / N) * 100).toFixed(2)));
+
+      if (ddHistChartInstance) {
+        ddHistChartInstance.destroy();
+      }
+
+      ddHistChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: '路徑佔比 (%)',
+            data: pctData,
+            backgroundColor: bgColors,
+            borderColor: borderColors,
+            borderWidth: 1,
+            borderRadius: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(8, 13, 26, 0.95)',
+              borderColor: '#334155',
+              borderWidth: 1,
+              titleFont: { family: 'JetBrains Mono', size: 11 },
+              bodyFont: { family: 'JetBrains Mono', size: 11 },
+              callbacks: {
+                title: (items) => `最大回撤區間: ${items[0].label}+`,
+                label: (item) => `出現機率: ${item.raw}% (${counts[item.dataIndex]} 條路徑)`
+              }
+            }
+          },
+          scales: {
+            x: {
+              grid: { display: false },
+              ticks: {
+                color: '#64748b',
+                font: { family: 'JetBrains Mono', size: 10 },
+                maxRotation: 45
+              },
+              title: {
+                display: true,
+                text: '最大回撤深度 ($) — 紅色代表觸及強平門檻',
+                color: '#64748b',
+                font: { family: 'JetBrains Mono', size: 10 }
+              }
+            },
+            y: {
+              grid: { color: 'rgba(30, 41, 59, 0.5)' },
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'JetBrains Mono', size: 10 },
+                callback: (v) => v + '%'
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // Run initial simulation automatically on load
+    window.addEventListener('DOMContentLoaded', () => {
+      runSimulation();
+    });
+  </script>
+</body>
+</html>
